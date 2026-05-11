@@ -4,7 +4,7 @@ A modern, filterable GitHub Pages archive for reviewing government UAP / UFO rec
 
 Live site:
 
-https://jayjonesvip.github.io/official-ufo-release/
+https://jayjonesvip.github.io/UAP-archive-brief
 
 ## Overview
 
