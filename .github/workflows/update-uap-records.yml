@@ -39,21 +39,56 @@ jobs:
           echo "Git status:"
           git status --short
 
-      - name: Commit records and media
+      - name: Commit records and media in batches
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config http.version HTTP/1.1
 
+          echo "Repo size:"
+          du -sh . || true
+
+          echo "Media size:"
+          du -sh media || true
+
+          echo "Large files over 90MB:"
+          find media -type f -size +90M -print || true
+
+          # Never commit dependencies
+          echo "node_modules/" >> .gitignore
+          git rm -r --cached node_modules 2>/dev/null || true
+
+          # Commit JSON first
+          git add .gitignore
           git add data/release-01-records.json
-          git add media/pdf
-          git add media/images
 
-          echo "Staged files:"
-          git status --short
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Update UAP Release 01 records and media"
+          if ! git diff --cached --quiet; then
+            git commit -m "Update UAP Release 01 records"
             git push
           fi
+
+          # Commit PDFs/images in small batches
+          files=$(find media/pdf media/images -type f | sort || true)
+          count=0
+          batch=1
+
+          for file in $files; do
+            git add "$file"
+            count=$((count + 1))
+
+            if [ "$count" -ge 15 ]; then
+              if ! git diff --cached --quiet; then
+                git commit -m "Add UAP media batch $batch"
+                git push
+              fi
+
+              count=0
+              batch=$((batch + 1))
+            fi
+          done
+
+          # Commit leftovers
+          if ! git diff --cached --quiet; then
+            git commit -m "Add remaining UAP media"
+            git push
+          fi     
