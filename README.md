@@ -1,46 +1,61 @@
-# UAP Release 01 Brief
+# Official UFO / UAP Archive
 
-A modern, standalone HTML brief for reviewing and filtering files from WAR.gov's UAP / UFO Release 01.
+A modern, filterable GitHub Pages archive for reviewing government UAP / UFO records from WAR.gov and related official source links.
 
-The page ranks released records by "official weight," using factors such as agency source, seniority of referenced officials, command-chain handling, trained witness quality, AARO involvement, and usefulness of the public record.
+Live site:
+
+https://jayjonesvip.github.io/official-ufo-release/
+
+## Overview
+
+This project presents government UAP records in a cleaner, easier-to-scan format.
+
+The site loads record data from a JSON file, ranks records by editorial source weight, supports filtering and sorting, and links back to the original official source files. When local image copies are available, the page opens the local image first while still preserving the original source link.
 
 ## Features
 
-- Dark mode and light mode toggle
-- 5-star source-weight ranking system
-- Filter by star rating
-- Filter by agency
-- Search by title, agency, year, or highlight
-- Direct links to source files
+- Modern dark mode / light mode interface
 - Responsive layout for desktop and mobile
-- Print-friendly styling
+- Centered key metric panels
+- 5-star source-weight ranking system
+- Top panel section showing only 5-star records
+- Full archive grid for all records
+- Search by title, agency, year, location, source URL, or highlight
+- Filter by:
+  - Star rating
+  - Agency
+  - File type
+- Sort by:
+  - Rating high to low
+  - Rating low to high
+  - Title A-Z
+  - Agency A-Z
+  - Year newest first
+  - Year oldest first
+- Local image support through `localPath`
+- Original source links preserved for every record
+- GitHub Action update pipeline
 
+## Live Site
 
-## Purpose
+The public site is hosted with GitHub Pages:
 
-This project is meant to make the Release 01 material easier to scan, compare, and revisit.
+https://jayjonesvip.github.io/official-ufo-release/
 
-It does not claim to prove the origin of any UAP event. The star ratings are an editorial ranking of official source weight, not a conclusion about what any object was.
+## Project Structure
 
-## Files
-
-- `ufo_release_01_ranked_brief.html` - Main standalone HTML document
-
-## How to Use
-
-Open the HTML file directly in a browser.
-
-No build tools, server, npm packages, or framework are required.
-
-
-After GitHub Pages publishes, the brief can be viewed as a simple public webpage.
-
-## Source Notes
-
-The direct document links point to WAR.gov release files where available.
-
-This project is a presentation and navigation aid only. Source records should be reviewed directly for verification.
-
-## License
-
-MIT License
+```txt
+official-ufo-release/
+├── index.html
+├── data/
+│   └── release-01-records.json
+├── media/
+│   └── images/
+├── scripts/
+│   └── update-records.mjs
+├── .github/
+│   └── workflows/
+│       └── update-uap-records.yml
+├── package.json
+├── .gitignore
+└── README.md
