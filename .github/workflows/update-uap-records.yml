@@ -30,10 +30,20 @@ jobs:
       - name: Refresh records
         run: npm run update-records
 
+      - name: Show generated media files
+        run: |
+          echo "PDF count:"
+          find media/pdf -type f | wc -l || true
+          echo "Image count:"
+          find media/images -type f | wc -l || true
+          echo "Git status:"
+          git status --short
+
       - name: Commit changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update UAP Release 01 records and media"
           file_pattern: |
             data/release-01-records.json
-            media/**
+            media/pdf/**
+            media/images/**
