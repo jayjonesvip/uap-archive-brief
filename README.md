@@ -4,7 +4,7 @@ A modern, filterable GitHub Pages archive for reviewing government UAP / UFO rec
 
 Live site:
 
-https://jayjonesvip.github.io/UAP-archive-brief
+https://jayjonesvip.github.io/uap-archive-brief/
 
 ## Overview
 
@@ -39,6 +39,8 @@ The site loads record data from a JSON file, ranks records by editorial source w
 ## Live Site
 
 The public site is hosted with GitHub Pages:
+
+[![Update UAP Release Records](https://github.com/jayjonesvip/uap-archive-brief/actions/workflows/update-uap-records.yml/badge.svg)](https://github.com/jayjonesvip/uap-archive-brief/actions/workflows/update-uap-records.yml)
 
 https://jayjonesvip.github.io/official-ufo-release/
 
