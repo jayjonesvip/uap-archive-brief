@@ -589,15 +589,51 @@ async function fetchCsvRecords(page) {
 
   console.log(`CSV URL: ${csvUrl}`);
 
-  const csvText = await page.evaluate(async url => {
-    const response = await fetch(url, { cache: "no-store" });
+  let csvText = "";
 
-    if (!response.ok) {
-      throw new Error(`CSV fetch failed: HTTP ${response.status}`);
+  // Try Node fetch first with browser-ish headers.
+  try {
+    const response = await fetch(csvUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "Accept": "text/csv,text/plain,*/*",
+        "Referer": SOURCE_URL
+      }
+    });
+
+    if (response.ok) {
+      csvText = await response.text();
+    } else {
+      console.warn(`Node CSV fetch failed: HTTP ${response.status}`);
     }
+  } catch (err) {
+    console.warn(`Node CSV fetch failed: ${err.message}`);
+  }
 
-    return await response.text();
-  }, csvUrl);
+  // Try page-context fetch second.
+  if (!csvText) {
+    try {
+      csvText = await page.evaluate(async url => {
+        const response = await fetch(url, {
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            "Accept": "text/csv,text/plain,*/*"
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`CSV fetch failed: HTTP ${response.status}`);
+        }
+
+        return await response.text();
+      }, csvUrl);
+    } catch (err) {
+      console.warn(`Page CSV fetch failed: ${err.message}`);
+      return [];
+    }
+  }
 
   const rows = csvRowsToObjects(csvText);
   console.log(`CSV rows: ${rows.length}`);
