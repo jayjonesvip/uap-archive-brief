@@ -14,7 +14,8 @@ const EXTRA_VIDEO_RECORDS = [
     type: "Video",
     location: "Near Japan / East China Sea",
     rating: 4,
-    highlight: "Infrared footage from a U.S. military platform; official video page."
+    highlight: "Infrared footage from a U.S. military platform; official video page.",
+    release: "Release 01"
   },
   {
     title: "DOW-UAP-PR49, Unresolved UAP Report, Department of the Army, 2026",
@@ -24,7 +25,8 @@ const EXTRA_VIDEO_RECORDS = [
     type: "Video",
     location: "Undisclosed",
     rating: 4,
-    highlight: "Infrared sensor video from a U.S. military platform; official video page."
+    highlight: "Infrared sensor video from a U.S. military platform; official video page.",
+    release: "Release 01"
   }
 ];
 
@@ -83,6 +85,16 @@ function getImagePath(url) {
   return path.join("media", "images", fileName);
 }
 
+function inferRelease(url) {
+  const match = url.match(/release_(\d+)/i);
+
+  if (match) {
+    return `Release ${match[1].padStart(2, "0")}`;
+  }
+
+  return "Release 01";
+}
+
 function cleanTitleFromUrl(url) {
   const file = decodeURIComponent(url.split("/").pop() || "");
   const base = file.replace(/\.(pdf|png|jpg|jpeg|mp4|mov|webm)$/i, "");
@@ -98,6 +110,30 @@ function cleanTitleFromUrl(url) {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function inferLocationFromFilename(filename) {
+  const missionMatch = filename.match(/mission-report-([^.]*)/i);
+
+  if (missionMatch) {
+    return missionMatch[1]
+      .replace(/-(january|february|march|april|may|june|july|august|september|october|november|december|\d{4}|na|\d{1,2})\b.*$/i, "")
+      .replace(/-/g, " ")
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .trim() || "N/A";
+  }
+
+  const rangeMatch = filename.match(/range-fouler-(?:debrief|reporting-form)-([^.]*)/i);
+
+  if (rangeMatch) {
+    return rangeMatch[1]
+      .replace(/-(january|february|march|april|may|june|july|august|september|october|november|december|\d{4}|na|\d{1,2})\b.*$/i, "")
+      .replace(/-/g, " ")
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .trim() || "N/A";
+  }
+
+  return "N/A";
+}
+
 function inferRecord(url) {
   const filename = decodeURIComponent(url.split("/").pop() || "").toLowerCase();
   const ext = (filename.split(".").pop() || "").toUpperCase();
@@ -107,7 +143,8 @@ function inferRecord(url) {
   let type = ext || "File";
   let location = "N/A";
   let rating = 2;
-  let highlight = "Official WAR.gov Release 01 media file.";
+  let highlight = "Official WAR.gov UAP archive media file.";
+  let release = inferRelease(url);
 
   const years = Array.from(new Set(filename.match(/(19\d{2}|20\d{2})/g) || []));
   let year = years.length ? years.sort().join("–") : "N/A";
@@ -117,6 +154,7 @@ function inferRecord(url) {
     type = filename.includes("range-fouler")
       ? "Range Fouler Report"
       : "Mission / Military Report";
+    location = inferLocationFromFilename(filename);
     rating = 3;
     highlight =
       "Military-origin UAP report, range-fouler debrief, launch summary, or correspondence.";
@@ -196,6 +234,20 @@ function inferRecord(url) {
       "AARO slide deck involving multiple federal law-enforcement witness teams.";
   }
 
+  if (filename.includes("composite-sketch")) {
+    agency = "FBI / Witness Material";
+    type = "Composite Sketch";
+    rating = 3;
+    highlight = "Composite sketch connected to witness/reporting material.";
+  }
+
+  if (filename.includes("serial-3") || filename.includes("serial-4")) {
+    agency = "FBI / Redacted Serial";
+    type = "FBI Redacted Serial";
+    rating = 3;
+    highlight = "Redacted FBI serial record tied to the UAP archive.";
+  }
+
   if (/^(65_hs|18_|38_|59_|331_|341_|342_|255_)/.test(filename)) {
     agency =
       agency === "Unknown / Archive"
@@ -215,8 +267,26 @@ function inferRecord(url) {
     type,
     location,
     rating,
-    highlight
+    highlight,
+    release
   };
+}
+
+function normalizeExistingRecord(record) {
+  const normalized = { ...record };
+
+  if (!normalized.release) {
+    normalized.release = inferRelease(normalized.url || "");
+  }
+
+  if (
+    normalized.localPath &&
+    normalized.localPath.toLowerCase().startsWith("media/pdf/")
+  ) {
+    delete normalized.localPath;
+  }
+
+  return normalized;
 }
 
 async function collectLinks(page) {
@@ -240,7 +310,7 @@ async function collectLinks(page) {
     return Array.from(new Set(values))
       .filter(
         u =>
-          /\/medialink\/ufo\/release_1\//i.test(u) ||
+          /\/medialink\/ufo\/release_\d+\//i.test(u) ||
           /dvidshub\.net\/video\/\d+\/dow-uap/i.test(u)
       )
       .map(u => u.replace(/&amp;/g, "&"));
@@ -250,7 +320,7 @@ async function collectLinks(page) {
 async function clickThroughPagination(page) {
   const allLinks = new Set();
 
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 40; i++) {
     const links = await collectLinks(page);
     links.forEach(link => allLinks.add(link));
 
@@ -291,14 +361,6 @@ async function clickThroughPagination(page) {
   return Array.from(allLinks);
 }
 
-async function removePdfLocalPaths(records) {
-  for (const record of records) {
-    if (record.localPath && record.localPath.toLowerCase().startsWith("media/pdf/")) {
-      delete record.localPath;
-    }
-  }
-}
-
 async function downloadImagesForRecords(records) {
   for (const record of records) {
     if (!record.url) continue;
@@ -316,7 +378,7 @@ async function downloadImagesForRecords(records) {
 }
 
 async function main() {
-  const existingRecords = await readExistingRecords();
+  const existingRecords = (await readExistingRecords()).map(normalizeExistingRecord);
 
   console.log(`Existing records: ${existingRecords.length}`);
 
@@ -368,7 +430,8 @@ async function main() {
             type: "Video",
             location: "N/A",
             rating: 3,
-            highlight: "Official DVIDS/WAR.gov-linked video record."
+            highlight: "Official DVIDS/WAR.gov-linked video record.",
+            release: "Release 01"
           }
         : inferRecord(url);
 
@@ -386,58 +449,37 @@ async function main() {
     });
   }
 
-  const records = Array.from(recordsMap.values()).sort(
-    (a, b) =>
-      b.rating - a.rating ||
-      String(a.agency).localeCompare(String(b.agency)) ||
-      String(a.title).localeCompare(String(b.title))
-  );
-
-  await removePdfLocalPaths(records);
-  await downloadImagesForRecords(records);
-
-  const mediaBackedRecords = records.filter(r => r.localPath).length;
-
-  console.log(`Built records: ${records.length}`);
-  console.log(`Image-backed records: ${mediaBackedRecords}`);
+  let records = Array.from(recordsMap.values())
+    .map(normalizeExistingRecord)
+    .sort(
+      (a, b) =>
+        String(a.release).localeCompare(String(b.release)) ||
+        b.rating - a.rating ||
+        String(a.agency).localeCompare(String(b.agency)) ||
+        String(a.title).localeCompare(String(b.title))
+    );
 
   if (existingRecords.length > 0 && records.length < existingRecords.length) {
     console.warn(
       `Scrape built ${records.length} records, which is less than existing ${existingRecords.length}. Keeping existing data.`
     );
 
-    await removePdfLocalPaths(existingRecords);
-    await downloadImagesForRecords(existingRecords);
-
-    const payload = {
-      generatedAt: new Date().toISOString(),
-      sourceUrl: SOURCE_URL,
-      count: existingRecords.length,
-      note:
-        "Scrape returned fewer records than existing data, so existing records were preserved.",
-      records: existingRecords
-    };
-
-    await fs.mkdir(path.dirname(OUT_FILE), {
-      recursive: true
-    });
-
-    await fs.writeFile(
-      OUT_FILE,
-      JSON.stringify(payload, null, 2) + "\n",
-      "utf8"
-    );
-
-    console.log(`Preserved ${existingRecords.length} existing records.`);
-    return;
+    records = existingRecords;
   }
+
+  await downloadImagesForRecords(records);
+
+  const imageBackedRecords = records.filter(record => record.localPath).length;
+
+  console.log(`Built records: ${records.length}`);
+  console.log(`Image-backed records: ${imageBackedRecords}`);
 
   const payload = {
     generatedAt: new Date().toISOString(),
     sourceUrl: SOURCE_URL,
     count: records.length,
     note:
-      "Generated by GitHub Actions from the rendered WAR.gov UAP page. Dynamic site behavior may require script tweaks if WAR.gov changes markup.",
+      "Generated by GitHub Actions from the rendered WAR.gov UAP page. Existing records are preserved if a scrape returns fewer records. Local copies are images only; PDFs and videos remain source links.",
     records
   };
 
