@@ -3,6 +3,7 @@ import path from "node:path";
 import { chromium } from "playwright";
 
 const SOURCE_URL = "https://www.war.gov/UFO/";
+const FALLBACK_CSV_URL = "https://www.war.gov/Portals/1/Interactive/2026/UFO/uap-data.csv";
 const OUT_FILE = path.join("data", "release-01-records.json");
 
 const EXTRA_VIDEO_RECORDS = [
@@ -542,21 +543,41 @@ async function collectLinks(page) {
 }
 
 async function getCsvUrl(page) {
-  return await page.evaluate(() => {
+  return await page.evaluate(fallbackCsvUrl => {
     const html = document.documentElement.innerHTML;
-    const match = html.match(/csvUrl\s*=\s*["']([^"']+)["']/i);
 
-    if (match) {
-      return new URL(match[1], location.href).href;
+    const patterns = [
+      /csvUrl\s*=\s*["']([^"']+)["']/i,
+      /csvUrl&quot;\s*:\s*&quot;([^&]+)&quot;/i,
+      /uap-data\.csv/i
+    ];
+
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+
+      if (match && match[1]) {
+        return new URL(match[1], location.href).href;
+      }
+    }
+
+    const directMatch = html.match(/\/Portals\/1\/Interactive\/2026\/UFO\/uap-data\.csv/i);
+
+    if (directMatch) {
+      return new URL(directMatch[0], location.href).href;
     }
 
     const csvLink = Array.from(document.querySelectorAll("a, link, script"))
       .map(el => el.getAttribute("href") || el.getAttribute("src") || "")
       .find(value => value && value.toLowerCase().includes("uap-data.csv"));
 
-    return csvLink ? new URL(csvLink, location.href).href : "";
-  });
+    if (csvLink) {
+      return new URL(csvLink, location.href).href;
+    }
+
+    return fallbackCsvUrl;
+  }, FALLBACK_CSV_URL);
 }
+
 
 async function fetchCsvRecords(page) {
   const csvUrl = await getCsvUrl(page);
