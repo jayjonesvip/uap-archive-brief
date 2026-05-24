@@ -40,53 +40,130 @@ async function readExistingRecords() {
   }
 }
 
-async function downloadImage(url, outputPath) {
-  try {
-    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+function parseCSV(csvText) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let insideQuotes = false;
 
-    const existing = await fs.stat(outputPath).catch(() => null);
-    if (existing && existing.size > 0) {
-      return outputPath;
-    }
+  for (let i = 0; i < csvText.length; i++) {
+    const char = csvText[i];
+    const nextChar = csvText[i + 1];
 
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-        "Referer": SOURCE_URL
+    if (char === '"' && insideQuotes && nextChar === '"') {
+      cell += '"';
+      i++;
+    } else if (char === '"') {
+      insideQuotes = !insideQuotes;
+    } else if (char === "," && !insideQuotes) {
+      row.push(cell.trim());
+      cell = "";
+    } else if ((char === "\n" || char === "\r") && !insideQuotes) {
+      if (cell || row.length) {
+        row.push(cell.trim());
+        rows.push(row);
+        row = [];
+        cell = "";
       }
+
+      if (char === "\r" && nextChar === "\n") {
+        i++;
+      }
+    } else {
+      cell += char;
+    }
+  }
+
+  if (cell || row.length) {
+    row.push(cell.trim());
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function normalizeKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function csvRowsToObjects(csvText) {
+  const rows = parseCSV(csvText);
+
+  if (!rows.length) {
+    return [];
+  }
+
+  const headers = rows[0].map(header => String(header || "").trim());
+
+  return rows.slice(1)
+    .filter(row => row.some(cell => String(cell || "").trim()))
+    .map(row => {
+      const obj = {};
+
+      headers.forEach((header, index) => {
+        obj[header] = row[index] || "";
+      });
+
+      return obj;
     });
+}
 
-    if (!response.ok) {
-      throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
+function pick(row, names) {
+  const normalizedLookup = new Map();
+
+  for (const [key, value] of Object.entries(row)) {
+    normalizedLookup.set(normalizeKey(key), value);
+  }
+
+  for (const name of names) {
+    const value = normalizedLookup.get(normalizeKey(name));
+
+    if (value !== undefined && String(value).trim() !== "") {
+      return String(value).trim();
     }
+  }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await fs.writeFile(outputPath, buffer);
+  return "";
+}
 
-    const written = await fs.stat(outputPath);
+function absolutizeUrl(value, baseUrl = SOURCE_URL) {
+  const raw = String(value || "").trim();
 
-    if (written.size > 10 * 1024 * 1024) {
-      console.warn(`Skipping local image over 10MB: ${outputPath}`);
-      await fs.rm(outputPath, { force: true });
-      return null;
-    }
+  if (!raw) {
+    return "";
+  }
 
-    return outputPath;
-  } catch (err) {
-    console.warn(`Skipping image download: ${url}`);
-    console.warn(err.message);
-    return null;
+  const first = raw.split("|").map(v => v.trim()).filter(Boolean)[0];
+
+  if (!first) {
+    return "";
+  }
+
+  try {
+    return new URL(first, baseUrl).href;
+  } catch {
+    return first;
   }
 }
 
-function getImagePath(url) {
-  const fileName = decodeURIComponent(url.split("/").pop().split("?")[0]);
-  return path.join("media", "images", fileName);
+function splitUrls(value, baseUrl = SOURCE_URL) {
+  return String(value || "")
+    .split("|")
+    .map(v => v.trim())
+    .filter(Boolean)
+    .map(v => {
+      try {
+        return new URL(v, baseUrl).href;
+      } catch {
+        return v;
+      }
+    });
 }
 
 function inferRelease(url) {
-  const match = url.match(/release_(\d+)/i);
+  const match = String(url || "").match(/release_(\d+)/i);
 
   if (match) {
     return `Release ${match[1].padStart(2, "0")}`;
@@ -95,8 +172,30 @@ function inferRelease(url) {
   return "Release 01";
 }
 
+function inferReleaseFromDate(value, fallbackUrl = "") {
+  const text = String(value || "").toLowerCase();
+
+  if (text.includes("05") && text.includes("22") && text.includes("26")) {
+    return "Release 02";
+  }
+
+  if (text.includes("may 22") || text.includes("2026-05-22") || text.includes("5/22/2026")) {
+    return "Release 02";
+  }
+
+  if (text.includes("05") && text.includes("08") && text.includes("26")) {
+    return "Release 01";
+  }
+
+  if (text.includes("may 8") || text.includes("2026-05-08") || text.includes("5/8/2026")) {
+    return "Release 01";
+  }
+
+  return inferRelease(fallbackUrl);
+}
+
 function cleanTitleFromUrl(url) {
-  const file = decodeURIComponent(url.split("/").pop() || "");
+  const file = decodeURIComponent(String(url || "").split("/").pop() || "");
   const base = file.replace(/\.(pdf|png|jpg|jpeg|mp4|mov|webm)$/i, "");
 
   return base
@@ -104,7 +203,7 @@ function cleanTitleFromUrl(url) {
     .replace(/\s+/g, " ")
     .trim()
     .replace(
-      /\b(dow|uap|fbi|nasa|dos|aaro|indopacom|centcom|afb|usper|pdf|na)\b/gi,
+      /\b(dow|uap|fbi|nasa|dos|aaro|indopacom|centcom|afb|usper|pdf|na|cia)\b/gi,
       m => m.toUpperCase()
     )
     .replace(/\b\w/g, c => c.toUpperCase());
@@ -135,7 +234,7 @@ function inferLocationFromFilename(filename) {
 }
 
 function inferRecord(url) {
-  const filename = decodeURIComponent(url.split("/").pop() || "").toLowerCase();
+  const filename = decodeURIComponent(String(url || "").split("/").pop() || "").toLowerCase();
   const ext = (filename.split(".").pop() || "").toUpperCase();
 
   let title = cleanTitleFromUrl(url);
@@ -156,8 +255,7 @@ function inferRecord(url) {
       : "Mission / Military Report";
     location = inferLocationFromFilename(filename);
     rating = 3;
-    highlight =
-      "Military-origin UAP report, range-fouler debrief, launch summary, or correspondence.";
+    highlight = "Military-origin UAP report, range-fouler debrief, launch summary, or correspondence.";
 
     if (
       filename.includes("indopacom") ||
@@ -185,8 +283,7 @@ function inferRecord(url) {
       : "FBI Photo PDF";
     location = "Western United States / Redacted";
     rating = 2;
-    highlight =
-      "FBI photo/image item; useful as supporting media but often light on surrounding context.";
+    highlight = "FBI photo/image item; useful as supporting media but often light on surrounding context.";
   }
 
   if (filename.startsWith("dos-uap")) {
@@ -230,8 +327,7 @@ function inferRecord(url) {
     type = "AARO Slide Deck";
     location = "Western United States";
     rating = 5;
-    highlight =
-      "AARO slide deck involving multiple federal law-enforcement witness teams.";
+    highlight = "AARO slide deck involving multiple federal law-enforcement witness teams.";
   }
 
   if (filename.includes("composite-sketch")) {
@@ -255,8 +351,7 @@ function inferRecord(url) {
         : agency;
     type = type === ext ? "Historical Archive File" : type;
     rating = Math.min(rating, 2);
-    highlight =
-      "Historical federal/military archive record, case-file section, or study.";
+    highlight = "Historical federal/military archive record, case-file section, or study.";
   }
 
   return {
@@ -269,6 +364,89 @@ function inferRecord(url) {
     rating,
     highlight,
     release
+  };
+}
+
+function getDocumentTypeLabel(row, url) {
+  const documentType = pick(row, ["documentType", "Document Type", "Type"]);
+  const fileType = pick(row, ["fileType", "File Type"]);
+
+  const source = documentType || fileType || url;
+
+  if (/video|mp4|mov|webm/i.test(source)) return "Video";
+  if (/image|jpg|jpeg|png|gif|webp/i.test(source)) return "Image";
+  if (/pdf/i.test(source)) return "PDF / Report";
+
+  return source || "Record";
+}
+
+function recordFromCsvRow(row) {
+  const title =
+    pick(row, ["title", "Asset File Name", "assetFileName", "Record Title", "name"]) ||
+    "Untitled UAP Record";
+
+  const agency = pick(row, ["agency", "Agency"]) || "Unknown / Archive";
+  const releaseDate = pick(row, ["releaseDate", "Release Date", "release"]);
+  const incidentDate = pick(row, ["incidentDate", "Incident Date", "date", "Year"]);
+  const incidentLocation = pick(row, ["incidentLocation", "Incident Location", "location"]);
+  const documentType = pick(row, ["documentType", "Document Type"]);
+  const fileType = pick(row, ["fileType", "File Type"]);
+  const description = pick(row, ["description", "Description", "summary", "Highlight"]);
+  const imageUrlRaw = pick(row, ["imageUrl", "Image URL", "image", "thumbnail"]);
+  const videoUrlRaw = pick(row, ["videoUrl", "Video URL", "video"]);
+  const downloadUrlRaw = pick(row, [
+    "downloadUrl",
+    "Download URL",
+    "download",
+    "Download",
+    "url",
+    "URL",
+    "fileUrl",
+    "File URL",
+    "documentUrl",
+    "Document URL",
+    "mediaUrl",
+    "Media URL"
+  ]);
+
+  const imageUrls = splitUrls(imageUrlRaw);
+  const videoUrls = splitUrls(videoUrlRaw);
+  const downloadUrl = absolutizeUrl(downloadUrlRaw);
+  const imageUrl = imageUrls[0] || "";
+  const videoUrl = videoUrls[0] || "";
+
+  const url = downloadUrl || videoUrl || imageUrl;
+
+  if (!url) {
+    return null;
+  }
+
+  const inferred = inferRecord(url);
+  const release = inferReleaseFromDate(releaseDate, url);
+  const type = getDocumentTypeLabel(row, url);
+
+  let rating = inferred.rating;
+
+  if (/aaro/i.test(agency)) rating = Math.max(rating, 4);
+  if (/department of war|dow|military|air force|army|navy|indopacom|centcom/i.test(agency)) rating = Math.max(rating, 3);
+  if (/witness|statement|slide/i.test(title)) rating = Math.max(rating, 4);
+  if (/western|usper/i.test(title)) rating = Math.max(rating, 5);
+
+  return {
+    title: title || inferred.title,
+    url,
+    agency,
+    year: incidentDate || inferred.year,
+    type,
+    location: incidentLocation || inferred.location,
+    rating,
+    highlight: description || inferred.highlight,
+    release,
+    source: "WAR.gov CSV",
+    imageUrl: imageUrl || undefined,
+    videoUrl: videoUrl || undefined,
+    fileType: fileType || undefined,
+    documentType: documentType || undefined
   };
 }
 
@@ -287,6 +465,51 @@ function normalizeExistingRecord(record) {
   }
 
   return normalized;
+}
+
+async function downloadImage(url, outputPath) {
+  try {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+    const existing = await fs.stat(outputPath).catch(() => null);
+    if (existing && existing.size > 0) {
+      return outputPath;
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "Referer": SOURCE_URL
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(outputPath, buffer);
+
+    const written = await fs.stat(outputPath);
+
+    if (written.size > 10 * 1024 * 1024) {
+      console.warn(`Skipping local image over 10MB: ${outputPath}`);
+      await fs.rm(outputPath, { force: true });
+      return null;
+    }
+
+    return outputPath;
+  } catch (err) {
+    console.warn(`Skipping image download: ${url}`);
+    console.warn(err.message);
+    return null;
+  }
+}
+
+function getImagePath(url) {
+  const fileName = decodeURIComponent(String(url).split("/").pop().split("?")[0]);
+  return path.join("media", "images", fileName);
 }
 
 async function collectLinks(page) {
@@ -311,10 +534,56 @@ async function collectLinks(page) {
       .filter(
         u =>
           /\/medialink\/ufo\/release_\d+\//i.test(u) ||
-          /dvidshub\.net\/video\/\d+\/dow-uap/i.test(u)
+          /dvidshub\.net\/video\/\d+\/dow-uap/i.test(u) ||
+          /cloudfront\.net/i.test(u)
       )
       .map(u => u.replace(/&amp;/g, "&"));
   });
+}
+
+async function getCsvUrl(page) {
+  return await page.evaluate(() => {
+    const html = document.documentElement.innerHTML;
+    const match = html.match(/csvUrl\s*=\s*["']([^"']+)["']/i);
+
+    if (match) {
+      return new URL(match[1], location.href).href;
+    }
+
+    const csvLink = Array.from(document.querySelectorAll("a, link, script"))
+      .map(el => el.getAttribute("href") || el.getAttribute("src") || "")
+      .find(value => value && value.toLowerCase().includes("uap-data.csv"));
+
+    return csvLink ? new URL(csvLink, location.href).href : "";
+  });
+}
+
+async function fetchCsvRecords(page) {
+  const csvUrl = await getCsvUrl(page);
+
+  if (!csvUrl) {
+    console.warn("No WAR.gov CSV URL found.");
+    return [];
+  }
+
+  console.log(`CSV URL: ${csvUrl}`);
+
+  const csvText = await page.evaluate(async url => {
+    const response = await fetch(url, { cache: "no-store" });
+
+    if (!response.ok) {
+      throw new Error(`CSV fetch failed: HTTP ${response.status}`);
+    }
+
+    return await response.text();
+  }, csvUrl);
+
+  const rows = csvRowsToObjects(csvText);
+  console.log(`CSV rows: ${rows.length}`);
+
+  return rows
+    .map(recordFromCsvRow)
+    .filter(Boolean);
 }
 
 async function clickThroughPagination(page) {
@@ -363,16 +632,23 @@ async function clickThroughPagination(page) {
 
 async function downloadImagesForRecords(records) {
   for (const record of records) {
-    if (!record.url) continue;
+    const imageCandidates = [
+      record.imageUrl,
+      record.url
+    ].filter(Boolean);
 
-    if (record.url.match(/\.(png|jpg|jpeg)(\?|$)/i)) {
-      const localPath = getImagePath(record.url);
-      const downloaded = await downloadImage(record.url, localPath);
+    const imageUrl = imageCandidates.find(url => /\.(png|jpg|jpeg)(\?|$)/i.test(url));
 
-      if (downloaded) {
-        record.localPath = downloaded.replaceAll("\\", "/");
-        console.log(`Downloaded image: ${record.localPath}`);
-      }
+    if (!imageUrl) {
+      continue;
+    }
+
+    const localPath = getImagePath(imageUrl);
+    const downloaded = await downloadImage(imageUrl, localPath);
+
+    if (downloaded) {
+      record.localPath = downloaded.replaceAll("\\", "/");
+      console.log(`Downloaded image: ${record.localPath}`);
     }
   }
 }
@@ -399,6 +675,7 @@ async function main() {
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await page.waitForTimeout(1500);
 
+  const csvRecords = await fetchCsvRecords(page);
   const pagedLinks = await clickThroughPagination(page);
   const finalLinks = await collectLinks(page);
 
@@ -406,7 +683,8 @@ async function main() {
 
   const links = Array.from(new Set([...pagedLinks, ...finalLinks]));
 
-  console.log(`Scraped links: ${links.length}`);
+  console.log(`Scraped direct links: ${links.length}`);
+  console.log(`CSV records: ${csvRecords.length}`);
 
   const recordsMap = new Map();
 
@@ -416,10 +694,20 @@ async function main() {
     }
   }
 
+  for (const record of csvRecords) {
+    if (record.url) {
+      recordsMap.set(record.url, {
+        ...recordsMap.get(record.url),
+        ...record
+      });
+    }
+  }
+
   for (const url of links) {
     if (
       /\.(pdf|png|jpg|jpeg|mp4|mov|webm)(\?|$)/i.test(url) ||
-      /dvidshub\.net\/video\//i.test(url)
+      /dvidshub\.net\/video\//i.test(url) ||
+      /cloudfront\.net/i.test(url)
     ) {
       const record = /dvidshub\.net\/video\//i.test(url)
         ? {
@@ -454,7 +742,7 @@ async function main() {
     .sort(
       (a, b) =>
         String(a.release).localeCompare(String(b.release)) ||
-        b.rating - a.rating ||
+        Number(b.rating || 0) - Number(a.rating || 0) ||
         String(a.agency).localeCompare(String(b.agency)) ||
         String(a.title).localeCompare(String(b.title))
     );
@@ -470,16 +758,19 @@ async function main() {
   await downloadImagesForRecords(records);
 
   const imageBackedRecords = records.filter(record => record.localPath).length;
+  const releases = Array.from(new Set(records.map(record => record.release || "Release 01"))).sort();
 
   console.log(`Built records: ${records.length}`);
   console.log(`Image-backed records: ${imageBackedRecords}`);
+  console.log(`Releases: ${releases.join(", ")}`);
 
   const payload = {
     generatedAt: new Date().toISOString(),
     sourceUrl: SOURCE_URL,
     count: records.length,
+    releases,
     note:
-      "Generated by GitHub Actions from the rendered WAR.gov UAP page. Existing records are preserved if a scrape returns fewer records. Local copies are images only; PDFs and videos remain source links.",
+      "Generated by GitHub Actions from the rendered WAR.gov UAP page and WAR.gov CSV data. Existing records are preserved if a scrape returns fewer records. Local copies are images only; PDFs and videos remain source links.",
     records
   };
 
