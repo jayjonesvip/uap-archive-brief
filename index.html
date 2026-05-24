@@ -49,6 +49,36 @@
   font-size: 12px;
   margin-top: 10px;
 }
+
+    .release-tabs-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 16px;
+}
+
+.release-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.release-tab {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.release-tab.active {
+  background: var(--accent);
+  color: #111;
+  border-color: var(--accent);
+}
     
     :root{--bg:#f3efe5;--panel:#fffdf8;--panel2:#f8f3e8;--text:#171717;--muted:#62615c;--border:#d8ccb8;--accent:#9d6b23;--star:#b97818;--link:#12385f;--chip:#ece3d3;--shadow:0 18px 45px rgba(0,0,0,.12)}
     html[data-theme=dark]{--bg:#090d12;--panel:#121923;--panel2:#182230;--text:#f5f0e6;--muted:#aeb7c4;--border:#2a3646;--accent:#d9a64d;--star:#ffd166;--link:#b9d9ff;--chip:#1d2a3a;--shadow:0 18px 45px rgba(0,0,0,.35)}
@@ -95,7 +125,11 @@
         <div class="hero-copy">
           <h1>WAR.gov UAP Archive</h1>
           <p class="subtitle">A modern, filterable reference page for government UAP records, ranked by official source weight and focused on direct links to the underlying files.</p>
-          <p class="source-note">When available, local image copies are preserved alongside the official source links so records can be compared if files are changed, moved, or removed later.</p>          <p id="status" class="status">Loading records…</p>
+          <p class="source-note">
+            When available, local image copies are preserved alongside the official source links so records can be compared if files are changed, moved, or removed later.
+          </p>
+
+      <p id="status" class="status">Loading records…</p>
         </div>
 
         <div class="hero-logo-wrap" aria-hidden="true">
@@ -139,7 +173,10 @@
         <p>Filter, sort, and open source files, local image copies, and official video/index pages.</p>
       </div>
     </section>
-
+    <section class="release-tabs-wrap">
+      <div id="releaseTabs" class="release-tabs"></div>
+    </section>
+        
     <section class="grid-tools" aria-label="Grid filters and sorting">
       <div class="toolbar">
         <input id="q" class="control" type="search" placeholder="Search title, agency, year, location, or highlight..." />
@@ -163,6 +200,7 @@
 
   <script>
     let records = [];
+    let activeRelease = "All";
     const $ = id => document.getElementById(id);
     const rows = $("rows");
     const topCards = $("topCards");
@@ -176,6 +214,33 @@
     function searchable(record){return [record.title,record.agency,record.year,record.type,record.location,record.highlight,record.url,record.localPath].join(" ").toLowerCase();}
     function firstYear(record){const match=String(record.year||record.title||record.url||"").match(/(19\d{2}|20\d{2})/);return match?Number(match[1]):0;}
 
+    function getRelease(record) {
+  return record.release || "Release 01";
+}
+
+function renderReleaseTabs() {
+  const releases = ["All", ...new Set(records.map(getRelease).sort())];
+
+  $("releaseTabs").innerHTML = releases.map(release => `
+    <button
+      type="button"
+      class="release-tab ${release === activeRelease ? "active" : ""}"
+      data-release="${esc(release)}"
+    >
+      ${esc(release)}
+    </button>
+  `).join("");
+
+  document.querySelectorAll(".release-tab").forEach(button => {
+    button.addEventListener("click", () => {
+      activeRelease = button.dataset.release;
+      renderReleaseTabs();
+      renderTop();
+      applyFilters();
+    });
+  });
+}
+    
     function sortRecords(list){
       const sort=$("sort").value;
       return [...list].sort((a,b)=>{
@@ -234,7 +299,11 @@
     }
 
     function renderTop(){
-      const topRecords=records.filter(r=>Number(r.rating||0)===5).sort((a,b)=>String(a.title).localeCompare(String(b.title)));
+      const topRecords = records
+  .filter(record =>
+    Number(record.rating || 0) === 5 &&
+    (activeRelease === "All" || getRelease(record) === activeRelease)
+  )
       if(!topRecords.length){topCards.innerHTML=`<article class="card"><span class="eyebrow">No 5-star records loaded</span><h3>Nothing to show yet</h3><p class="small">Check the archive grid below or rerun the data update workflow.</p></article>`;return;}
       topCards.innerHTML=topRecords.map(record=>{
         const preview=hasLocalImage(record)?`<img class="preview" src="${esc(record.localPath)}" alt="${esc(record.title)} preview" loading="lazy" />`:"";
@@ -254,8 +323,11 @@
       const type=$("type").value.toLowerCase();
       const filtered=records.filter(record=>{
         const text=searchable(record),rating=Number(record.rating||0);
-        return(!query||text.includes(query))&&rating>=minRating&&(!agency||String(record.agency||"").toLowerCase().includes(agency))&&(!type||typeBucket(record.type)===type);
-      });
+        return (activeRelease === "All" || getRelease(record) === activeRelease) &&
+          (!query || text.includes(query)) &&
+          rating >= minRating &&
+          (!agency || String(record.agency || "").toLowerCase().includes(agency)) &&
+          (!type || typeBucket(record.type) === type);      });
       renderRows(sortRecords(filtered));
     }
 
@@ -273,6 +345,7 @@
       $("fiveStarCount").textContent=records.filter(record=>Number(record.rating||0)===5).length;
       $("generatedAt").textContent=formatGeneratedAt(data.generatedAt);
       $("status").textContent=`Loaded ${records.length} records from ${data.sourceUrl||"data/release-01-records.json"}.`;
+      renderReleaseTabs();
       renderRandomLocalImages();
       renderTop();
       applyFilters();
