@@ -5,6 +5,12 @@ import { chromium } from "playwright";
 const SOURCE_URL = "https://www.war.gov/UFO/";
 const FALLBACK_CSV_URL = "https://www.war.gov/Portals/1/Interactive/2026/UFO/uap-data.csv";
 const OUT_FILE = path.join("data", "release-01-records.json");
+const RELEASE_DATES = new Map([
+  ["2026-05-08", "Release 01"],
+  ["2026-05-22", "Release 02"],
+  ["2026-06-12", "Release 03"],
+  ["2026-07-10", "Release 04"]
+]);
 
 const EXTRA_VIDEO_RECORDS = [
   {
@@ -174,14 +180,69 @@ function inferRelease(url) {
 }
 
 function inferReleaseFromDate(value, fallbackUrl = "") {
-  const text = String(value || "").toLowerCase();
+  const raw = String(value || "");
+  const text = raw.toLowerCase();
+  const releaseMatch = text.match(/release\s*0?(\d+)/i);
+
+  if (releaseMatch) {
+    return `Release ${releaseMatch[1].padStart(2, "0")}`;
+  }
+
+  const numericDateMatch = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/);
+
+  if (numericDateMatch) {
+    const [, month, day, year] = numericDateMatch;
+    const fullYear = year.length === 2 ? `20${year}` : year;
+    const key = `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+
+    if (RELEASE_DATES.has(key)) {
+      return RELEASE_DATES.get(key);
+    }
+  }
+
+  const isoDateMatch = text.match(/\b(20\d{2}-\d{1,2}-\d{1,2})\b/);
+
+  if (isoDateMatch) {
+    const [year, month, day] = isoDateMatch[1].split("-");
+    const key = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+
+    if (RELEASE_DATES.has(key)) {
+      return RELEASE_DATES.get(key);
+    }
+  }
+
+  const date = new Date(raw);
+
+  if (!Number.isNaN(date.getTime())) {
+    const key = date.toISOString().slice(0, 10);
+
+    if (RELEASE_DATES.has(key)) {
+      return RELEASE_DATES.get(key);
+    }
+  }
 
   if (text.includes("05") && text.includes("22") && text.includes("26")) {
     return "Release 02";
   }
 
+  if (text.includes("06") && text.includes("12") && text.includes("26")) {
+    return "Release 03";
+  }
+
+  if (text.includes("07") && text.includes("10") && text.includes("26")) {
+    return "Release 04";
+  }
+
   if (text.includes("may 22") || text.includes("2026-05-22") || text.includes("5/22/2026")) {
     return "Release 02";
+  }
+
+  if (text.includes("june 12") || text.includes("2026-06-12") || text.includes("6/12/2026")) {
+    return "Release 03";
+  }
+
+  if (text.includes("july 10") || text.includes("2026-07-10") || text.includes("7/10/2026")) {
+    return "Release 04";
   }
 
   if (text.includes("05") && text.includes("08") && text.includes("26")) {
@@ -392,9 +453,26 @@ function recordFromCsvRow(row) {
   const incidentLocation = pick(row, ["incidentLocation", "Incident Location", "location"]);
   const documentType = pick(row, ["documentType", "Document Type"]);
   const fileType = pick(row, ["fileType", "File Type"]);
-  const description = pick(row, ["description", "Description", "summary", "Highlight"]);
-  const imageUrlRaw = pick(row, ["imageUrl", "Image URL", "image", "thumbnail"]);
-  const videoUrlRaw = pick(row, ["videoUrl", "Video URL", "video"]);
+  const description = pick(row, [
+    "description",
+    "Description",
+    "Description Blurb",
+    "summary",
+    "Highlight"
+  ]);
+  const imageUrlRaw = pick(row, [
+    "imageUrl",
+    "Image URL",
+    "image",
+    "thumbnail",
+    "Modal Image",
+    "PDF | Image Link"
+  ]);
+  const dvidsVideoId = pick(row, ["DVIDS Video ID", "dvidsVideoId"]);
+  const videoTitle = pick(row, ["Video Title", "videoTitle"]);
+  const videoUrlRaw =
+    pick(row, ["videoUrl", "Video URL", "video", "Video Pairing"]) ||
+    (dvidsVideoId ? `https://www.dvidshub.net/video/${dvidsVideoId}` : "");
   const downloadUrlRaw = pick(row, [
     "downloadUrl",
     "Download URL",
@@ -406,6 +484,7 @@ function recordFromCsvRow(row) {
     "File URL",
     "documentUrl",
     "Document URL",
+    "PDF | Image Link",
     "mediaUrl",
     "Media URL"
   ]);
@@ -446,6 +525,8 @@ function recordFromCsvRow(row) {
     source: "WAR.gov CSV",
     imageUrl: imageUrl || undefined,
     videoUrl: videoUrl || undefined,
+    videoTitle: videoTitle || undefined,
+    dvidsVideoId: dvidsVideoId || undefined,
     fileType: fileType || undefined,
     documentType: documentType || undefined
   };
@@ -687,6 +768,70 @@ async function clickThroughPagination(page) {
   return Array.from(allLinks);
 }
 
+async function discoverReleaseUrls(page) {
+  const urls = await page.evaluate(sourceUrl => {
+    const values = new Set([location.href, sourceUrl]);
+    const html = document.documentElement.innerHTML;
+
+    for (const el of document.querySelectorAll("a, button, [data-release], [data-tab], [href]")) {
+      const text = (el.textContent || "").trim();
+      const attrs = [
+        el.getAttribute("href"),
+        el.getAttribute("data-release"),
+        el.getAttribute("data-tab"),
+        el.getAttribute("aria-controls"),
+        el.getAttribute("id")
+      ].filter(Boolean);
+
+      for (const value of [text, ...attrs]) {
+        const match = String(value).match(/(?:release\D*|^)(0?[1-9]\d?)(?:\D|$)/i);
+
+        if (match) {
+          values.add(new URL(`?release=${match[1].padStart(2, "0")}`, sourceUrl).href);
+        }
+      }
+
+      const href = el.getAttribute("href");
+
+      if (href && /\/UFO\/(?:release\/)?0?[1-9]\d?\/?|\?release=0?[1-9]\d?/i.test(href)) {
+        values.add(new URL(href, location.href).href);
+      }
+    }
+
+    for (const match of html.matchAll(/(?:\/UFO\/release\/|\?release=)(0?[1-9]\d?)/gi)) {
+      values.add(new URL(`?release=${match[1].padStart(2, "0")}`, sourceUrl).href);
+    }
+
+    return Array.from(values);
+  }, SOURCE_URL);
+
+  return Array.from(new Set(urls)).sort();
+}
+
+async function collectReleaseScopedLinks(page) {
+  const allLinks = new Set();
+  const releaseUrls = await discoverReleaseUrls(page);
+
+  console.log(`Release views: ${releaseUrls.length}`);
+
+  for (const url of releaseUrls) {
+    await page.goto(url, {
+      waitUntil: "networkidle",
+      timeout: 120000
+    });
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(1000);
+
+    const links = await clickThroughPagination(page);
+    links.forEach(link => allLinks.add(link));
+    const finalLinks = await collectLinks(page);
+    finalLinks.forEach(link => allLinks.add(link));
+  }
+
+  return Array.from(allLinks);
+}
+
 async function downloadImagesForRecords(records) {
   for (const record of records) {
     const imageCandidates = [
@@ -733,12 +878,11 @@ async function main() {
   await page.waitForTimeout(1500);
 
   const csvRecords = await fetchCsvRecords(page);
-  const pagedLinks = await clickThroughPagination(page);
-  const finalLinks = await collectLinks(page);
+  const releaseLinks = await collectReleaseScopedLinks(page);
 
   await browser.close();
 
-  const links = Array.from(new Set([...pagedLinks, ...finalLinks]));
+  const links = Array.from(new Set(releaseLinks));
 
   console.log(`Scraped direct links: ${links.length}`);
   console.log(`CSV records: ${csvRecords.length}`);
